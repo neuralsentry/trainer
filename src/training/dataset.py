@@ -1,4 +1,5 @@
 import os
+import logging
 import struct
 import torch
 import argparse
@@ -6,7 +7,11 @@ import numpy as np
 import transformers
 import json
 import tqdm
+import pandas as pd
+from pandarallel import pandarallel
 from typing import Tuple
+
+logger = logging.getLogger(__name__)
 
 def decode(in_file: str, out_file: str, tokenizer: transformers.AutoTokenizer) -> int:
     mem = np.memmap(in_file, mode="r", dtype="uint16")
@@ -62,7 +67,7 @@ class FeedbackDataset(torch.utils.data.Dataset):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.feedback_file = feedback_file
-        
+
         with open(feedback_file) as f:
             self.feedback = [json.loads(line) for line in f]
 
@@ -90,32 +95,47 @@ class FeedbackDataset(torch.utils.data.Dataset):
 # }
 import tqdm
 class SFTDataset(torch.utils.data.Dataset):
-    def __init__(self, sft_file: str, tokenizer: transformers.AutoTokenizer, max_length: int = 2048):
+    def __init__(self, sft_file: str, tokenizer: transformers.AutoTokenizer, is_main_process: bool, max_length: int = 2048):
+        # TODO(11b): nb_workers should default to `num_cores / num_gpus`
+        pandarallel.initialize(progress_bar=is_main_process, nb_workers=4, verbose=1)
+
         self.tokenizer = tokenizer
         self.max_length = max_length
-        self.sft_file = sft_file
-        
-        with open(sft_file) as f:
-            self.sft = [json.loads(line) for line in f]
-        
-        # iterate over sft, removing any that have a reward of 0
-        self.sft = [sft for sft in self.sft if sft["reward"] != 0.0]
+
+        if is_main_process:
+            logger.info("Loading SFT dataset entirely into memory...")
+
+        df = pd.read_json(sft_file, lines=True)
+
+        if is_main_process:
+            logger.info("Tokenizing SFT dataset...")
+
+        # Length warning messes up progress bars, so we silence temporarily.
+        # https://github.com/huggingface/transformers/issues/991
+        logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
+        df = df.parallel_apply(self._sftrow2item, axis=1)
+        logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.WARNING)
+
+        if is_main_process:
+            logger.info("Iterating over SFT dataset and dropping long sequences")
+
+        self.df = pd.DataFrame()
+        self.df["input_ids"] = df.map(lambda x: x["input_ids"])
+        self.df["start_positions"] = df.map(lambda x: x["start_positions"])
+        self.df["end_positions"] = df.map(lambda x: x["end_positions"])
 
         # iterate over sft, removing any that have too many tokens
-        for feedback in tqdm.tqdm(self.sft, desc="Validating SFT"):
-            inputs = feedback["input"] + f' {feedback["output"].lstrip().rstrip()}\n'
-            if len(self.tokenizer(inputs).input_ids) > self.max_length:
-                self.sft.remove(feedback)
-                print(f"Removed {feedback['output']} due to length")
+        self.df = self.df.loc[self.df["input_ids"].map(lambda x: len(x[0])) <= self.max_length]
 
-    def __len__(self):
-        return len(self.sft)
-    
-    def __getitem__(self, idx):
-        sft = self.sft[idx]
+        if is_main_process:
+            # TODO(11b): Cache resulting data and save as a pickle or something.
+            logger.info("Data is ready")
+
+    def _sftrow2item(self, sft):
         sft_input_tokens = self.tokenizer(sft["input"], return_tensors="pt").input_ids
-        sft_output_tokens = self.tokenizer(f' {sft["output"].lstrip().rstrip()}\n', return_tensors="pt").input_ids
+        sft_output_tokens = self.tokenizer(f' {sft["output"].lstrip().rstrip()}\n<|endoftext|>', return_tensors="pt").input_ids
         input_ids = torch.cat([sft_input_tokens, sft_output_tokens], dim=-1)
+
         start_positions = torch.tensor([len(sft_input_tokens[0])])
         end_positions = torch.tensor([len(sft_input_tokens[0]) + len(sft_output_tokens[0]) - 1])
         return {
@@ -123,7 +143,19 @@ class SFTDataset(torch.utils.data.Dataset):
             "start_positions": start_positions,
             "end_positions": end_positions,
         }
-        
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx):
+        item = self.df.iloc[idx]
+        return item
+        return {
+            "input_ids": item["input_ids"],
+            "start_positions": item["start_positions"],
+            "end_positions": item["end_positions"],
+        }
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Dataset Creator')

@@ -244,7 +244,8 @@ def main() -> None:
             "end_positions": end_positions,
         }
 
-    train_dataset = SFTDataset(args.dataset, tokenizer)
+    train_dataset = SFTDataset(
+        args.dataset, tokenizer, is_main_process=accelerator.is_main_process)
 
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
