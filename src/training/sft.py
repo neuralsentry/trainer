@@ -110,18 +110,23 @@ class SFT_Trainer:
             )
 
             self.global_step = 0
-    
+
     def save_model(self) -> None:
+        self.accelerator.wait_for_everyone()
         path = f'{self.args.output_dir}/{self.run.name}'
         os.makedirs(path, exist_ok=True)
-        unwrapped_model = self.accelerator.unwrap_model(self.model)
-        unwrapped_model.save_pretrained(
-            path,
-            is_main_process=self.accelerator.is_main_process,
-            save_function=self.accelerator.save
-        )
-        if self.accelerator.is_main_process:
-            self.tokenizer.save_pretrained(path)
+
+        if self.args.save_slim_weights:
+            unwrapped_model = self.accelerator.unwrap_model(self.model)
+            unwrapped_model.save_pretrained(
+                path,
+                is_main_process=self.accelerator.is_main_process,
+                save_function=self.accelerator.save
+            )
+            if self.accelerator.is_main_process:
+                self.tokenizer.save_pretrained(path)
+        else:
+            self.accelerator.save_state(path)
 
     def step(self, batch: dict) -> None:
         with self.accelerator.accumulate(self.model):
@@ -153,11 +158,11 @@ class SFT_Trainer:
                 print(f"end_positions: {end_positions}")
                 print('Skipping batch...')
                 loss = torch.tensor(float('nan'), device=self.accelerator.device)
-        
+
         return {
             "train/loss": loss.detach().item(),
         }
-    
+
     def train(self) -> None:
         self.model.train()
         for epoch in range(self.args.epochs):
@@ -191,7 +196,6 @@ class SFT_Trainer:
 
                     if self.global_step % self.args.save_steps == 0:
                         self.save_model()
-        self.accelerator.wait_for_everyone()
         self.save_model()
 
 def main() -> None:
@@ -204,6 +208,7 @@ def main() -> None:
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
     parser.add_argument("--save_steps", type=int, default=1000, help="Save model every x steps")
     parser.add_argument("--learning_rate", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument("--save_slim_weights", action="store_true", help="Save only slim weights when saving checkpoints")
     args = parser.parse_args()
 
     accelerator = accelerate.Accelerator()
@@ -231,7 +236,7 @@ def main() -> None:
             "start_positions": start_positions,
             "end_positions": end_positions,
         }
-    
+
     train_dataset = SFTDataset(args.dataset, tokenizer)
 
     train_dataloader = torch.utils.data.DataLoader(
@@ -282,7 +287,7 @@ if __name__ == '__main__':
     question_tokens = tokenizer.encode(question, return_tensors='pt')
     answer_tokens = tokenizer.encode(answer, return_tensors='pt')
     input_ids = torch.cat([question_tokens, answer_tokens], dim=-1)
-    
+
     start_positions = torch.tensor([len(question_tokens[0])])
     end_positions = torch.tensor([len(question_tokens[0]) + len(answer_tokens[0]) - 1])
 
