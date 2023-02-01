@@ -100,6 +100,7 @@ class SFT_Trainer:
         self.optimizer = optimizer
         self.weight_dtype = weight_dtype
         self.args = args
+        self.local_step = 0
 
         if accelerator.is_main_process:
             self.progress_bar = tqdm.tqdm(
@@ -108,12 +109,11 @@ class SFT_Trainer:
                 leave=False,
             )
 
-            self.global_step = 0
-
     def save_model(self) -> None:
-        self.accelerator.wait_for_everyone()
         path = os.path.join(self.args.output_dir, self.args.run_name)
-        os.makedirs(path, exist_ok=True)
+        if self.accelerator.is_main_process:
+            os.makedirs(path, exist_ok=True)
+        self.accelerator.wait_for_everyone()
 
         if self.args.save_slim_weights:
             unwrapped_model = self.accelerator.unwrap_model(self.model)
@@ -179,6 +179,7 @@ class SFT_Trainer:
                 metrics = self.step(batch)
 
                 step_end = time.perf_counter()
+                self.local_step += 1
 
                 if self.accelerator.is_main_process:
                     rank_samples_per_second = self.args.batch_size / (step_end - step_start)
@@ -188,18 +189,16 @@ class SFT_Trainer:
                         "perf/rank_samples_per_second": rank_samples_per_second,
                         "perf/world_samples_per_second": world_samples_per_second,
                         "train/epoch": epoch,
-                        "train/samples_seen": self.global_step * self.args.batch_size,
+                        "train/samples_seen": self.local_step * self.args.batch_size,
                     })
-
-                    self.global_step += 1
 
                     self.progress_bar.update(1)
                     self.progress_bar.set_postfix(**metrics)
 
-                    self.accelerator.log(metrics, step=self.global_step)
+                    self.accelerator.log(metrics, step=self.local_step)
 
-                    if self.global_step % self.args.save_steps == 0:
-                        self.save_model()
+                if self.local_step % self.args.save_steps == 0:
+                    self.save_model()
         self.save_model()
         accelerator.end_training()
 
