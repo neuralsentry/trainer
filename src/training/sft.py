@@ -89,6 +89,7 @@ class SFT_Trainer:
         model: AutoModelForCausalLM,
         tokenizer: AutoTokenizer,
         train_dataloader: torch.utils.data.DataLoader,
+        eval_dataloader: torch.utils.data.DataLoader,
         optimizer: torch.optim.Optimizer,
         weight_dtype: torch.dtype,
         args: argparse.Namespace,
@@ -97,6 +98,7 @@ class SFT_Trainer:
         self.model = model
         self.tokenizer = tokenizer
         self.train_dataloader = train_dataloader
+        self.eval_dataloader = eval_dataloader
         self.optimizer = optimizer
         self.weight_dtype = weight_dtype
         self.args = args
@@ -162,11 +164,68 @@ class SFT_Trainer:
             "train/loss": loss.detach().item(),
         }
 
+    def eval_step(self, batch: dict) -> None:
+        input_ids = batch['input_ids']
+        attention_mask = batch['attention_mask']
+        start_positions = batch['start_positions']
+        end_positions = batch['end_positions']
+
+        with torch.no_grad():
+            try:
+                outputs = sft_forward(
+                    self.model,
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    start_positions=start_positions,
+                    end_positions=end_positions,
+                )
+
+                loss = outputs.loss
+            except RuntimeError as e:
+                print(f"RuntimeError: {e}")
+                print(f"input_ids: {input_ids}")
+                print(f"attention_mask: {attention_mask}")
+                print(f"start_positions: {start_positions}")
+                print(f"end_positions: {end_positions}")
+                print('Skipping batch...')
+                loss = torch.tensor(float('nan'), device=self.accelerator.device)
+
+        return loss
+
+    def do_eval(self) -> None:
+        if self.eval_dataloader is None:
+            return
+
+        self.model.eval()
+        eval_losses = []
+
+        if self.accelerator.is_main_process:
+            progress_bar = tqdm.tqdm(
+                total=len(self.eval_dataloader),
+                desc="Eval Steps",
+                leave=False,
+            )
+
+        for batch in self.eval_dataloader:
+            loss = self.eval_step(batch).unsqueeze(0)
+            eval_losses.append(loss)
+            if self.accelerator.is_main_process:
+                progress_bar.update(1)
+
+        eval_losses = torch.cat(eval_losses)
+        eval_losses = eval_losses[:len(self.eval_dataloader)]
+        eval_loss = torch.mean(eval_losses)
+        if self.accelerator.is_main_process:
+            # FIXME(11b): This isn't showing up on Tensorboard.
+            self.accelerator.log({"eval/loss": eval_loss}, step=self.local_step)
+        self.model.train()
+
     def train(self) -> None:
         # Delete some keys from the CLI args because they're prone to info leakage.
         hps = copy.deepcopy(vars(self.args))
         del hps['model']
-        del hps['dataset']
+        del hps['train_dataset']
+        del hps['eval_dataset']
 
         self.accelerator.init_trackers(self.args.run_name, config=hps)
         self.model.train()
@@ -199,14 +258,17 @@ class SFT_Trainer:
 
                 if self.local_step % self.args.save_steps == 0:
                     self.save_model()
+                    self.do_eval()
         self.save_model()
-        accelerator.end_training()
+        self.do_eval()
+        self.accelerator.end_training()
 
 def main() -> None:
 
     parser = argparse.ArgumentParser(description="Supervised GPT finetuning")
     parser.add_argument("--model", type=str, default="hakurei/gpt-j-random-tinier", help="Model name")
-    parser.add_argument("--dataset", type=str, default="train.jsonl", help="Training file")
+    parser.add_argument("--train_dataset", type=str, default="train.jsonl", help="Training file")
+    parser.add_argument("--eval_dataset", type=str, default=None, help="Eval split file")
     parser.add_argument("--output_dir", type=str, default="output", help="Output directory")
     parser.add_argument("--epochs", type=int, default=1, help="Number of epochs")
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
@@ -245,7 +307,7 @@ def main() -> None:
         }
 
     train_dataset = SFTDataset(
-        args.dataset, tokenizer, is_main_process=accelerator.is_main_process)
+        args.train_dataset, tokenizer, is_main_process=accelerator.is_main_process)
 
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
@@ -253,6 +315,18 @@ def main() -> None:
         shuffle=True,
         collate_fn=collate_fn,
     )
+
+    eval_dataloader = None
+    if args.eval_dataset is not None:
+        eval_dataset = SFTDataset(
+            args.eval_dataset, tokenizer, is_main_process=accelerator.is_main_process)
+
+        eval_dataloader = torch.utils.data.DataLoader(
+            eval_dataset,
+            batch_size=args.batch_size,
+            shuffle=True,
+            collate_fn=collate_fn,
+        )
 
     model = AutoModelForCausalLM.from_pretrained(args.model)
     optim_cls = torch.optim.AdamW
@@ -264,8 +338,8 @@ def main() -> None:
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
 
-    model, optimizer, train_dataloader = accelerator.prepare(
-        model, optimizer, train_dataloader
+    model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
+        model, optimizer, train_dataloader, eval_dataloader
     )
 
     trainer = SFT_Trainer(
@@ -273,6 +347,7 @@ def main() -> None:
         model=model,
         tokenizer=tokenizer,
         train_dataloader=train_dataloader,
+        eval_dataloader=eval_dataloader,
         optimizer=optimizer,
         weight_dtype=None,
         args=args,
