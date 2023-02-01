@@ -33,11 +33,16 @@ def sft_forward(
     except AttributeError:
         return_dict = True
 
-    outputs = self.transformer(
+    outputs = self.module.gpt_neox(
         input_ids,
         attention_mask=attention_mask,
-        token_type_ids=token_type_ids,
-        position_ids=position_ids,
+
+        # TODO(11b): Not used in NeoX. Ideally this code shouldn't be
+        # model-specific at all but let's not spend time on that right now.
+        #
+        # token_type_ids=token_type_ids,
+        # position_ids=position_ids,
+
         head_mask=head_mask,
         inputs_embeds=inputs_embeds,
         output_attentions=output_attentions,
@@ -47,7 +52,7 @@ def sft_forward(
 
     sequence_output = outputs[0]
 
-    logits = self.lm_head(sequence_output)
+    logits = self.module.embed_out(sequence_output)
 
     answer_logits = logits[:, start_positions[0]:end_positions[0]+1]
     answer_input_ids = input_ids[:, start_positions[0]:end_positions[0]+1]
