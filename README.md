@@ -1,22 +1,56 @@
-# convogpt
-This repo contains pretrained models and tools that are to be used for modelling human-aligned dialog.
+# accelerate-training-code
 
-## ⚙️ Pretrained Models
-| Model ID   | Parameter Count | Training Method |
-|------------|-----------------|-----------------|
-| [convogpt-125m-uft](https://huggingface.co/hakurei/convogpt/tree/main/125m-uft) | 125 Million | Unsupervised Finetuning |
-| [convogpt-1.3b-uft](https://huggingface.co/hakurei/convogpt/tree/main/1.3b-uft) | 1.3 Billion | Unsupervised Finetuning |
-| [convogpt-2.7b-uft](https://huggingface.co/hakurei/convogpt/tree/main/2.7b-uft) | 2.7 Billion | Unsupervised Finetuning |
-| [convogpt-6b-uft](https://huggingface.co/hakurei/convogpt/tree/main/6b-uft)     | 6 Billion   | Unsupervised Finetuning |
+A fork of [harubaru/convogpt](https://github.com/harubaru/convogpt).
 
-## 🔑 Setup
+This is the training code I use to fine-tune the Pygmalion models.
 
-```shell
-git clone git@github.com:harubaru/convogpt.git
-cd convogpt
-python -m pip install -r requirements
+## Warning
+
+I break stuff pretty often in here, and hardcode things with little consideration so I can move quickly. Expect things to not work out of the box. Off the top of my head, you should know that:
+
+- The UFT training code is outdated, and I don't know if it's working.
+- The SFT code only works with NeoX-based models + DeepSpeed with at least ZeRO 1 enabled, I believe.
+
+## Quick Start
+
+Assuming you already know the deal about setting up an isolated environment. Install the requirements:
+
+```bash
+pip install -r requirements.txt
 ```
 
-## 🤖 Inference
-```python
+Optionally, if you want to use 8-bit AdamW:
+
 ```
+pip install bitsandbytes
+```
+
+Then start a training run:
+
+```bash
+export OMP_NUM_THREADS=4
+
+RUN_NAME="example_run"
+
+BASE_MODEL="EleutherAI/pythia-70m-deduped"
+TRAIN_DATASET="./data/sft-small-train.jsonl"
+EVAL_DATASET="./data/sft-small-eval.jsonl"
+OUTPUT_DIR="./models/"
+EPOCHS=2
+BATCH_SIZE=1
+SAVE_STEPS=50
+LEARNING_RATE=1e-5
+
+accelerate launch src/training/sft.py \
+    --model "$BASE_MODEL" \
+    --train_dataset "$TRAIN_DATASET" \
+    --eval_dataset "$EVAL_DATASET" \
+    --output_dir "$OUTPUT_DIR" \
+    --epochs "$EPOCHS" \
+    --batch_size "$BATCH_SIZE" \
+    --save_steps "$SAVE_STEPS" \
+    --learning_rate "$LEARNING_RATE" \
+    --run_name "$RUN_NAME"
+```
+
+Things should show up inside `$OUTPUT_DIR` eventually.
