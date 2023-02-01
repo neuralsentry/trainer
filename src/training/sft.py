@@ -1,10 +1,10 @@
+import copy
 import os
 import torch
 import accelerate
 import tqdm
 import time
 import argparse
-import wandb
 
 from dataset import TokenizedDataset, FeedbackDataset, SFTDataset
 
@@ -103,17 +103,11 @@ class SFT_Trainer:
                 leave=False,
             )
 
-            self.run = wandb.init(
-                project="convogpt-sftlm",
-                name=f'{self.args.model}-{self.args.epochs}-{self.args.batch_size}-{self.args.learning_rate}--{int(time.time())}',
-                config=self.args,
-            )
-
             self.global_step = 0
 
     def save_model(self) -> None:
         self.accelerator.wait_for_everyone()
-        path = f'{self.args.output_dir}/{self.run.name}'
+        path = os.path.join(self.args.output_dir, self.args.run_name)
         os.makedirs(path, exist_ok=True)
 
         if self.args.save_slim_weights:
@@ -164,6 +158,12 @@ class SFT_Trainer:
         }
 
     def train(self) -> None:
+        # Delete some keys from the CLI args because they're prone to info leakage.
+        hps = copy.deepcopy(vars(self.args))
+        del hps['model']
+        del hps['dataset']
+
+        self.accelerator.init_trackers(self.args.run_name, config=hps)
         self.model.train()
         for epoch in range(self.args.epochs):
             for _, batch in enumerate(self.train_dataloader):
@@ -183,7 +183,6 @@ class SFT_Trainer:
                         "perf/rank_samples_per_second": rank_samples_per_second,
                         "perf/world_samples_per_second": world_samples_per_second,
                         "train/epoch": epoch,
-                        "train/step": self.global_step,
                         "train/samples_seen": self.global_step * self.args.batch_size,
                     })
 
@@ -192,11 +191,12 @@ class SFT_Trainer:
                     self.progress_bar.update(1)
                     self.progress_bar.set_postfix(**metrics)
 
-                    self.run.log(metrics, step=self.global_step)
+                    self.accelerator.log(metrics, step=self.global_step)
 
                     if self.global_step % self.args.save_steps == 0:
                         self.save_model()
         self.save_model()
+        accelerator.end_training()
 
 def main() -> None:
 
@@ -209,9 +209,12 @@ def main() -> None:
     parser.add_argument("--save_steps", type=int, default=1000, help="Save model every x steps")
     parser.add_argument("--learning_rate", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--save_slim_weights", action="store_true", help="Save only slim weights when saving checkpoints")
+    parser.add_argument("--log_with", type=str, default="all", help="Which experiment tracker to use")
+    parser.add_argument("--run_name", type=str, required=True, help="Name of this run, will be used as a folder name")
     args = parser.parse_args()
 
-    accelerator = accelerate.Accelerator()
+    logging_dir = os.path.join(args.output_dir, "logs")
+    accelerator = accelerate.Accelerator(log_with=args.log_with, logging_dir=logging_dir)
     accelerate.utils.set_seed(42)
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
