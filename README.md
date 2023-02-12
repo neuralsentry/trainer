@@ -9,7 +9,7 @@ This is the training code I use to fine-tune the Pygmalion models.
 I break stuff pretty often in here, and hardcode things with little consideration so I can move quickly. Expect things to not work out of the box. Off the top of my head, you should know that:
 
 - The UFT training code is outdated, and I don't know if it's working.
-- The SFT code only works with NeoX-based models + DeepSpeed with at least ZeRO 1 enabled, I believe.
+- The SFT code only works with NeoX-based models + DeepSpeed, I believe.
 
 ## Quick Start
 
@@ -19,10 +19,14 @@ Assuming you already know the deal about setting up an isolated environment. Ins
 pip install -r requirements.txt
 ```
 
-Optionally, if you want to use 8-bit AdamW:
+Additionally, you might want to install:
 
-```
-pip install bitsandbytes
+```bash
+# for local logging. Can also use wandb if you prefer, not tested
+pip install tensorboard
+
+# for ZeRO and other training optimizations
+pip install deepspeed
 ```
 
 Then start a training run:
@@ -52,5 +56,7 @@ accelerate launch src/training/sft.py \
     --learning_rate "$LEARNING_RATE" \
     --run_name "$RUN_NAME"
 ```
+
+**NOTE:** The tokenized datasets will be cached, so you need to take care when dealing with large input files (since they'll basically be copied) or when using new data but keeping the same filename (since I don't check file hashes or anything of the sorts, you'll need to delete the cached `.tokenized.bin` files).
 
 Things should show up inside `$OUTPUT_DIR` eventually.
