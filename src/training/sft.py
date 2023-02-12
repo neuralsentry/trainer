@@ -378,13 +378,6 @@ def main() -> None:
     model = AutoModelForCausalLM.from_pretrained(
         args.model, low_cpu_mem_usage=True, torch_dtype=torch.bfloat16)
 
-    optim_cls = torch.optim.AdamW
-    try:
-        import bitsandbytes as bnb
-        optim_cls = bnb.optim.AdamW8bit
-    except ImportError:
-        pass
-
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
 
     model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
