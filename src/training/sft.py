@@ -131,10 +131,10 @@ class SFT_Trainer:
 
     def step(self, batch: dict) -> None:
         with self.accelerator.accumulate(self.model):
-            input_ids = batch['input_ids']
-            attention_mask = batch['attention_mask']
-            start_positions = batch['start_positions']
-            end_positions = batch['end_positions']
+            input_ids = batch['input_ids'].to("cuda")
+            attention_mask = batch['attention_mask'].to("cuda")
+            start_positions = batch['start_positions'].to("cuda")
+            end_positions = batch['end_positions'].to("cuda")
 
             try:
                 outputs = sft_forward(
@@ -165,10 +165,10 @@ class SFT_Trainer:
         }
 
     def eval_step(self, batch: dict) -> None:
-        input_ids = batch['input_ids']
-        attention_mask = batch['attention_mask']
-        start_positions = batch['start_positions']
-        end_positions = batch['end_positions']
+        input_ids = batch['input_ids'].to("cuda")
+        attention_mask = batch['attention_mask'].to("cuda")
+        start_positions = batch['start_positions'].to("cuda")
+        end_positions = batch['end_positions'].to("cuda")
 
         with torch.no_grad():
             try:
