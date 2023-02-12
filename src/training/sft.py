@@ -5,6 +5,7 @@ import accelerate
 import tqdm
 import time
 import argparse
+import json
 
 from dataset import TokenizedDataset, FeedbackDataset, SFTDataset
 
@@ -102,7 +103,11 @@ class SFT_Trainer:
         self.optimizer = optimizer
         self.weight_dtype = weight_dtype
         self.args = args
+        self.starting_step = 0
         self.local_step = 0
+
+        if args.resume_from is not None:
+            self.load_model(args.resume_from)
 
         if accelerator.is_main_process:
             self.progress_bar = tqdm.tqdm(
@@ -111,10 +116,25 @@ class SFT_Trainer:
                 leave=False,
             )
 
+    def load_model(self, path) -> None:
+        # TODO(11b): Doesn't work with slim checkpoints.
+        self.accelerator.load_state(path)
+
+        state_file_path = os.path.join(path, "trainer_state.json")
+        with open(state_file_path, "r") as state_file:
+            trainer_state = json.load(state_file)
+            self.starting_step = trainer_state["step"]
+
     def save_model(self) -> None:
         path = os.path.join(self.args.output_dir, self.args.run_name)
         if self.accelerator.is_main_process:
             os.makedirs(path, exist_ok=True)
+
+            state_file_path = os.path.join(path, "trainer_state.json")
+            with open(state_file_path, "w") as state_file:
+                state_file.write(json.dumps({
+                    "step": self.local_step
+                }))
         self.accelerator.wait_for_everyone()
 
         if self.args.save_slim_weights:
@@ -236,7 +256,14 @@ class SFT_Trainer:
         self.accelerator.init_trackers(self.args.run_name, config=hps)
         self.model.train()
         for epoch in range(self.args.epochs):
-            for _, batch in enumerate(self.train_dataloader):
+            for idx, batch in enumerate(self.train_dataloader):
+                # Skip over data if resuming a training run.
+                if idx < self.starting_step:
+                    self.local_step += 1
+                    if self.accelerator.is_main_process:
+                        self.progress_bar.update(1)
+                    continue
+
                 step_start = time.perf_counter()
 
                 #print(f"####\n{self.tokenizer.decode(batch['input_ids'][0])}\n#{batch['start_positions'][0]}:{batch['end_positions'][0]}\n####")
@@ -283,6 +310,7 @@ def main() -> None:
     parser.add_argument("--save_slim_weights", action="store_true", help="Save only slim weights when saving checkpoints")
     parser.add_argument("--log_with", type=str, default="all", help="Which experiment tracker to use")
     parser.add_argument("--run_name", type=str, required=True, help="Name of this run, will be used as a folder name")
+    parser.add_argument("--resume_from", type=str, help="Resume training from a checkpoint")
     args = parser.parse_args()
 
     logging_dir = os.path.join(args.output_dir, "logs")
