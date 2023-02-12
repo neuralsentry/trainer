@@ -1,5 +1,6 @@
 import os
 import logging
+import pickle
 import struct
 import torch
 import argparse
@@ -96,6 +97,12 @@ class FeedbackDataset(torch.utils.data.Dataset):
 import tqdm
 class SFTDataset(torch.utils.data.Dataset):
     def __init__(self, sft_file: str, tokenizer: transformers.AutoTokenizer, is_main_process: bool, max_length: int = 2048):
+        tokenized_data_cache = f"{sft_file}.tokenized.bin"
+        if os.path.isfile(tokenized_data_cache):
+            with open(tokenized_data_cache, "rb") as file:
+                self.df = pickle.load(file)
+            return
+
         # TODO(11b): nb_workers should default to `num_cores / num_gpus`
         pandarallel.initialize(progress_bar=is_main_process, nb_workers=4, verbose=1)
 
@@ -128,12 +135,14 @@ class SFTDataset(torch.utils.data.Dataset):
         self.df = self.df.loc[self.df["input_ids"].map(lambda x: len(x[0])) <= self.max_length]
 
         if is_main_process:
-            # TODO(11b): Cache resulting data and save as a pickle or something.
             logger.info("Data is ready")
+            with open(tokenized_data_cache, "wb") as file:
+                pickle.dump(self.df, file, protocol=pickle.HIGHEST_PROTOCOL)
+
 
     def _sftrow2item(self, sft):
-        sft_input_tokens = self.tokenizer(sft["input"], return_tensors="pt").input_ids
-        sft_output_tokens = self.tokenizer(f' {sft["output"].lstrip().rstrip()}\n<|endoftext|>', return_tensors="pt").input_ids
+        sft_input_tokens = self.tokenizer(sft["input"].strip(), return_tensors="pt").input_ids
+        sft_output_tokens = self.tokenizer(f' {sft["output"].strip()}<|endoftext|>', return_tensors="pt").input_ids
         input_ids = torch.cat([sft_input_tokens, sft_output_tokens], dim=-1)
 
         start_positions = torch.tensor([len(sft_input_tokens[0])])
