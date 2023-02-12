@@ -311,6 +311,7 @@ def main() -> None:
     parser.add_argument("--log_with", type=str, default="all", help="Which experiment tracker to use")
     parser.add_argument("--run_name", type=str, required=True, help="Name of this run, will be used as a folder name")
     parser.add_argument("--resume_from", type=str, help="Resume training from a checkpoint")
+    parser.add_argument("--save_pretrained", type=str, help="Save pretrained checkpoint after continuing a training run")
     args = parser.parse_args()
 
     logging_dir = os.path.join(args.output_dir, "logs")
@@ -375,6 +376,19 @@ def main() -> None:
     model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
         model, optimizer, train_dataloader, eval_dataloader
     )
+
+    if args.save_pretrained:
+        accelerator.load_state(args.resume_from)
+        unwrapped_model = accelerator.unwrap_model(model)
+        unwrapped_model.half()
+        unwrapped_model.save_pretrained(
+            args.save_pretrained,
+            is_main_process=accelerator.is_main_process,
+            save_function=accelerator.save
+        )
+        if accelerator.is_main_process:
+            tokenizer.save_pretrained(args.save_pretrained)
+        quit()
 
     trainer = SFT_Trainer(
         accelerator=accelerator,
