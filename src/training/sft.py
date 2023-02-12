@@ -244,6 +244,12 @@ class SFT_Trainer:
         if self.accelerator.is_main_process:
             # FIXME(11b): This isn't showing up on Tensorboard.
             self.accelerator.log({"eval/loss": eval_loss}, step=self.local_step)
+
+            # Writing to a file so we have this data until the above is fixed.
+            path = os.path.join(self.args.output_dir, self.args.run_name)
+            with open(os.path.join(path, "eval_losses.csv"), "a") as file:
+                file.write(f"{self.local_step};{eval_loss}\n")
+
         self.model.train()
 
     def train(self) -> None:
