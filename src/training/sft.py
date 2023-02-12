@@ -152,6 +152,9 @@ class SFT_Trainer:
                 self.optimizer.step()
                 self.optimizer.zero_grad()
             except RuntimeError as e:
+                if "CUDA out of memory" not in str(e):
+                    raise e
+
                 print(f"RuntimeError: {e}")
                 print(f"input_ids: {input_ids}")
                 print(f"attention_mask: {attention_mask}")
@@ -182,6 +185,9 @@ class SFT_Trainer:
 
                 loss = outputs.loss
             except RuntimeError as e:
+                if "CUDA out of memory" not in str(e):
+                    raise e
+
                 print(f"RuntimeError: {e}")
                 print(f"input_ids: {input_ids}")
                 print(f"attention_mask: {attention_mask}")
