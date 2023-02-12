@@ -370,7 +370,9 @@ def main() -> None:
             collate_fn=collate_fn,
         )
 
-    model = AutoModelForCausalLM.from_pretrained(args.model)
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model, low_cpu_mem_usage=True, torch_dtype=torch.bfloat16)
+
     optim_cls = torch.optim.AdamW
     try:
         import bitsandbytes as bnb
