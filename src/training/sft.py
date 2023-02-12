@@ -317,12 +317,17 @@ def main() -> None:
     parser.add_argument("--save_slim_weights", action="store_true", help="Save only slim weights when saving checkpoints")
     parser.add_argument("--log_with", type=str, default="all", help="Which experiment tracker to use")
     parser.add_argument("--run_name", type=str, required=True, help="Name of this run, will be used as a folder name")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=16, help="Gradient accumulation steps")
     parser.add_argument("--resume_from", type=str, help="Resume training from a checkpoint")
     parser.add_argument("--save_pretrained", type=str, help="Save pretrained checkpoint after continuing a training run")
     args = parser.parse_args()
 
-    logging_dir = os.path.join(args.output_dir, "logs")
-    accelerator = accelerate.Accelerator(log_with=args.log_with, logging_dir=logging_dir)
+    project_dir = os.path.join(args.output_dir, "logs")
+    accelerator = accelerate.Accelerator(
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        log_with=args.log_with,
+        project_dir=project_dir,
+    )
     accelerate.utils.set_seed(42)
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
