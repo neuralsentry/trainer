@@ -267,11 +267,13 @@ class SFT_Trainer:
         self.model.train()
 
     def train(self) -> None:
-        # Delete some keys from the CLI args because they're prone to info leakage.
-        hps = copy.deepcopy(vars(self.args))
-        del hps['model']
-        del hps['train_dataset']
-        del hps['eval_dataset']
+        hps = {
+            "base_model": os.path.basename(self.args.model),
+            "learning_rate": self.args.learning_rate,
+            "learning_rate_scheduler": self.args.learning_rate_scheduler,
+            "warmup_steps": self.args.warmup_steps,
+            "gradient_accumulation_steps": self.args.gradient_accumulation_steps,
+        }
 
         self.accelerator.init_trackers(self.args.run_name, config=hps)
         self.model.train()
