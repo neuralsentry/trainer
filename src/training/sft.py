@@ -397,6 +397,8 @@ def main() -> None:
         num_training_steps=args.epochs * len(train_dataloader),
     )
 
+    model = torch.compile(model, mode="max-autotune")
+
     model, optimizer, lr_scheduler, train_dataloader, eval_dataloader = accelerator.prepare(
         model, optimizer, lr_scheduler, train_dataloader, eval_dataloader
     )
