@@ -10,7 +10,7 @@ import json
 from dataset import TokenizedDataset, FeedbackDataset, SFTDataset
 from lion import Lion
 
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, get_scheduler
 from transformers.modeling_outputs import CausalLMOutput
 
 from typing import Union, Optional
@@ -102,6 +102,7 @@ class SFT_Trainer:
         train_dataloader: torch.utils.data.DataLoader,
         eval_dataloader: torch.utils.data.DataLoader,
         optimizer: torch.optim.Optimizer,
+        lr_scheduler,
         weight_dtype: torch.dtype,
         args: argparse.Namespace,
     ) -> None:
@@ -111,6 +112,7 @@ class SFT_Trainer:
         self.train_dataloader = train_dataloader
         self.eval_dataloader = eval_dataloader
         self.optimizer = optimizer
+        self.lr_scheduler = lr_scheduler
         self.weight_dtype = weight_dtype
         self.args = args
         self.starting_step = 0
@@ -180,6 +182,7 @@ class SFT_Trainer:
                 if self.accelerator.sync_gradients:
                     self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
                 self.optimizer.step()
+                self.lr_scheduler.step()
                 self.optimizer.zero_grad()
             except RuntimeError as e:
                 if "CUDA out of memory" not in str(e):
@@ -195,6 +198,7 @@ class SFT_Trainer:
 
         return {
             "train/loss": loss.detach().item(),
+            "train/lr": self.lr_scheduler.get_last_lr()[0],
         }
 
     def eval_step(self, batch: dict) -> None:
@@ -276,6 +280,7 @@ class SFT_Trainer:
                 # Skip over data if resuming a training run.
                 if idx < self.starting_step:
                     self.local_step += 1
+                    self.lr_scheduler.step()
                     if self.accelerator.is_main_process:
                         self.progress_bar.update(1)
                     continue
@@ -323,6 +328,8 @@ def main() -> None:
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
     parser.add_argument("--save_steps", type=int, default=1000, help="Save model every x steps")
     parser.add_argument("--learning_rate", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument("--learning_rate_scheduler", type=str, default="constant", help="Learning rate scheduler")
+    parser.add_argument("--warmup_steps", type=int, default=128, help="Number of warmup steps")
     parser.add_argument("--save_slim_weights", action="store_true", help="Save only slim weights when saving checkpoints")
     parser.add_argument("--log_with", type=str, default="all", help="Which experiment tracker to use")
     parser.add_argument("--run_name", type=str, required=True, help="Name of this run, will be used as a folder name")
@@ -394,8 +401,15 @@ def main() -> None:
 
     optimizer = optimizer_cls(model.parameters(), lr=args.learning_rate)
 
-    model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
-        model, optimizer, train_dataloader, eval_dataloader
+    lr_scheduler = get_scheduler(
+        name=args.learning_rate_scheduler,
+        optimizer=optimizer,
+        num_warmup_steps=args.warmup_steps,
+        num_training_steps=args.epochs * len(train_dataloader),
+    )
+
+    model, optimizer, lr_scheduler, train_dataloader, eval_dataloader = accelerator.prepare(
+        model, optimizer, lr_scheduler, train_dataloader, eval_dataloader
     )
 
     if args.save_pretrained:
@@ -418,6 +432,7 @@ def main() -> None:
         train_dataloader=train_dataloader,
         eval_dataloader=eval_dataloader,
         optimizer=optimizer,
+        lr_scheduler=lr_scheduler,
         weight_dtype=None,
         args=args,
     )
