@@ -275,7 +275,7 @@ class SFT_Trainer:
             "gradient_accumulation_steps": self.args.gradient_accumulation_steps,
         }
 
-        self.accelerator.init_trackers(self.args.run_name, config=hps)
+        self.accelerator.init_trackers(self.args.project_name, config=hps)
         self.model.train()
         for epoch in range(self.args.epochs):
             for idx, batch in enumerate(self.train_dataloader):
@@ -335,6 +335,7 @@ def main() -> None:
     parser.add_argument("--save_slim_weights", action="store_true", help="Save only slim weights when saving checkpoints")
     parser.add_argument("--log_with", type=str, default="all", help="Which experiment tracker to use")
     parser.add_argument("--run_name", type=str, required=True, help="Name of this run, will be used as a folder name")
+    parser.add_argument("--project_name", type=str, required=True, help="Project name for wandb/accelerate's tracker.")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=16, help="Gradient accumulation steps")
     parser.add_argument("--resume_from", type=str, help="Resume training from a checkpoint")
     parser.add_argument("--save_pretrained", type=str, help="Save pretrained checkpoint after continuing a training run")
