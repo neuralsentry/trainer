@@ -13,7 +13,7 @@ I break stuff pretty often in here, and hardcode things with little consideratio
 
 ## Quick Start
 
-Assuming you already know the deal about setting up an isolated environment. Install the requirements:
+Assuming you already know the deal about setting up an isolated environment. First, install PyTorch >= 2.0 according to your setup. Then, install the requirements from the file:
 
 ```bash
 pip install -r requirements.txt
@@ -22,10 +22,11 @@ pip install -r requirements.txt
 Additionally, you might want to install:
 
 ```bash
-# for local logging. Can also use wandb if you prefer, not tested
+# for experiment logging (or wandb, if you prefer that)
 pip install tensorboard
 
-# for ZeRO and other training optimizations
+# for ZeRO and other training optimizations. if you install this, make sure to
+# do `accelerate config` and set up your DeepSpeed config.
 pip install deepspeed
 ```
 
@@ -35,6 +36,7 @@ Then start a training run:
 export OMP_NUM_THREADS=4
 
 RUN_NAME="example_run"
+PROJECT_NAME="wandb-project-name"
 
 BASE_MODEL="EleutherAI/pythia-70m-deduped"
 TRAIN_DATASET="./data/sft-small-train.jsonl"
@@ -54,7 +56,9 @@ accelerate launch src/training/sft.py \
     --batch_size "$BATCH_SIZE" \
     --save_steps "$SAVE_STEPS" \
     --learning_rate "$LEARNING_RATE" \
-    --run_name "$RUN_NAME"
+    --run_name "$RUN_NAME" \
+    --project_name "$PROJECT_NAME" \
+    $@
 ```
 
 **NOTE:** The tokenized datasets will be cached, so you need to take care when dealing with large input files (since they'll basically be copied) or when using new data but keeping the same filename (since I don't check file hashes or anything of the sorts, you'll need to delete the cached `.tokenized.bin` files).
