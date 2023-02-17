@@ -8,20 +8,11 @@ import argparse
 import json
 
 from dataset import TokenizedDataset, FeedbackDataset, SFTDataset
-from lion import Lion
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_scheduler
 from transformers.modeling_outputs import CausalLMOutput
 
 from typing import Union, Optional
-
-# Have optimizers in a dictionary rather than in an if statement
-# This is so that if more optimizers are added in the future,
-# the code looks cleaner
-OPTIMIZER_DICT = {
-    "adamw": torch.optim.AdamW,
-    "lion": Lion
-}
 
 # Supervised Finetuning: Compute loss between model output and target using start_positions and end_positions
 def sft_forward(
@@ -339,11 +330,8 @@ def main() -> None:
     parser.add_argument("--gradient_accumulation_steps", type=int, default=16, help="Gradient accumulation steps")
     parser.add_argument("--resume_from", type=str, help="Resume training from a checkpoint")
     parser.add_argument("--save_pretrained", type=str, help="Save pretrained checkpoint after continuing a training run")
-    parser.add_argument("--optimizer", type=str, default="adamw", help="The optimizer to use during model training")
     args = parser.parse_args()
 
-    assert args.optimizer.lower() in OPTIMIZER_DICT.keys(), "Invalid optimizer type specified!"
-    
     project_dir = os.path.join(args.output_dir, "logs")
     accelerator = accelerate.Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
@@ -375,6 +363,9 @@ def main() -> None:
             "end_positions": end_positions,
         }
 
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model, low_cpu_mem_usage=True, torch_dtype=torch.bfloat16)
+
     train_dataset = SFTDataset(
         args.train_dataset, tokenizer, is_main_process=accelerator.is_main_process)
 
@@ -397,12 +388,7 @@ def main() -> None:
             collate_fn=collate_fn,
         )
 
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model, low_cpu_mem_usage=True, torch_dtype=torch.bfloat16)
-    
-    optimizer_cls = OPTIMIZER_DICT[args.optimizer.lower()]
-
-    optimizer = optimizer_cls(model.parameters(), lr=args.learning_rate)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
 
     lr_scheduler = get_scheduler(
         name=args.learning_rate_scheduler,
