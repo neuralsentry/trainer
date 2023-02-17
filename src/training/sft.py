@@ -8,11 +8,17 @@ import argparse
 import json
 
 from dataset import TokenizedDataset, FeedbackDataset, SFTDataset
+from Lion import Lion
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_scheduler
 from transformers.modeling_outputs import CausalLMOutput
 
 from typing import Union, Optional
+
+OPTIMIZER_DICT = {
+    "adamw": torch.optim.AdamW,
+    "lion": Lion,
+}
 
 # Supervised Finetuning: Compute loss between model output and target using start_positions and end_positions
 def sft_forward(
@@ -330,7 +336,10 @@ def main() -> None:
     parser.add_argument("--gradient_accumulation_steps", type=int, default=16, help="Gradient accumulation steps")
     parser.add_argument("--resume_from", type=str, help="Resume training from a checkpoint")
     parser.add_argument("--save_pretrained", type=str, help="Save pretrained checkpoint after continuing a training run")
+    parser.add_argument("--optimizer", type=str, help="The optimizer to use during model training")
     args = parser.parse_args()
+
+    assert args.optimizer in OPTIMIZER_DICT.keys(), f"Invalid optimizer, valid options are: {', '.join(OPTIMIZER_DICT.keys())}"
 
     project_dir = os.path.join(args.output_dir, "logs")
     accelerator = accelerate.Accelerator(
@@ -388,7 +397,8 @@ def main() -> None:
             collate_fn=collate_fn,
         )
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
+    optim_cls = OPTIMIZER_DICT[args.optimizer]
+    optimizer = optim_cls(model.parameters(), lr=args.learning_rate)
 
     lr_scheduler = get_scheduler(
         name=args.learning_rate_scheduler,
