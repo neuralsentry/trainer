@@ -336,7 +336,7 @@ def main() -> None:
     parser.add_argument("--gradient_accumulation_steps", type=int, default=16, help="Gradient accumulation steps")
     parser.add_argument("--resume_from", type=str, help="Resume training from a checkpoint")
     parser.add_argument("--save_pretrained", type=str, help="Save pretrained checkpoint after continuing a training run")
-    parser.add_argument("--optimizer", type=str, help="The optimizer to use during model training")
+    parser.add_argument("--optimizer", type=str, default="adamw", help="The optimizer to use during model training")
     args = parser.parse_args()
 
     assert args.optimizer in OPTIMIZER_DICT.keys(), f"Invalid optimizer, valid options are: {', '.join(OPTIMIZER_DICT.keys())}"
