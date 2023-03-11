@@ -7,13 +7,16 @@ import time
 import argparse
 import json
 
-from dataset import TokenizedDataset, FeedbackDataset, SFTDataset
-from Lion import Lion
+from typing import Union, Optional
 
+from peft import LoraConfig, TaskType, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_scheduler
 from transformers.modeling_outputs import CausalLMOutput
 
-from typing import Union, Optional
+from dataset import TokenizedDataset, FeedbackDataset, SFTDataset
+from lion import Lion
+
+
 
 OPTIMIZER_DICT = {
     "adamw": torch.optim.AdamW,
@@ -158,7 +161,37 @@ class SFT_Trainer:
         else:
             self.accelerator.save_state(path)
 
-    def step(self, batch: dict) -> None:
+    def warmup_step(self) -> None:
+        '''Preallocates memory for maximum sequence length in order to avoid nasty OOM shocks'''
+        model_config = self.model.module.gpt_neox.config
+        input_ids = torch.randint(
+            low=1,
+            high=model_config.vocab_size + 1,
+            # max_position_embeddings is the maxmimum context window of the model
+            # Usually, this is 2048
+            size=(self.args.batch_size, model_config.max_position_embeddings)
+        ).to("cuda")
+        attention_mask = torch.zeros((self.args.batch_size, model_config.max_position_embeddings)).to("cuda")
+        # Start positions can be 0 and end positions can be 1, it doesn't really matter.
+        start_positions = torch.zeros((self.args.batch_size, 1)).to("cuda")
+        end_positions = torch.ones((self.args.batch_size, 1)).to("cuda")
+
+        outputs = sft_forward(
+            self.model,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            start_positions=start_positions,
+            end_positions=end_positions,
+        )
+
+        loss = outputs.loss
+        self.accelerator.backward(loss)
+        if self.accelerator.sync_gradients:
+            self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
+        # Do not execute a step on the optimizer or LR scheduler, but zero out gradients
+        self.optimizer.zero_grad()
+
+    def step(self, batch: dict) -> dict:
         with self.accelerator.accumulate(self.model):
             input_ids = batch['input_ids'].to("cuda")
             attention_mask = batch['attention_mask'].to("cuda")
@@ -198,7 +231,7 @@ class SFT_Trainer:
             "train/lr": self.lr_scheduler.get_last_lr()[0],
         }
 
-    def eval_step(self, batch: dict) -> None:
+    def eval_step(self, batch: dict) -> torch.tensor:
         input_ids = batch['input_ids'].to("cuda")
         attention_mask = batch['attention_mask'].to("cuda")
         start_positions = batch['start_positions'].to("cuda")
@@ -274,6 +307,9 @@ class SFT_Trainer:
 
         self.accelerator.init_trackers(self.args.project_name, config=hps)
         self.model.train()
+        # Apply warmup step to preallocate memory
+        self.warmup_step()
+
         for epoch in range(self.args.epochs):
             for idx, batch in enumerate(self.train_dataloader):
                 # Skip over data if resuming a training run.
@@ -337,6 +373,8 @@ def main() -> None:
     parser.add_argument("--resume_from", type=str, help="Resume training from a checkpoint")
     parser.add_argument("--save_pretrained", type=str, help="Save pretrained checkpoint after continuing a training run")
     parser.add_argument("--optimizer", type=str, default="adamw", help="The optimizer to use during model training")
+    parser.add_argument("--apply_lora", action="store_true", help="Fine-tune the model with LoRA, rather than adjusting the full network")
+    parser.add_argument("--lora_r", type=int, default=16, help="Dimension of LoRA matrices")
     args = parser.parse_args()
 
     assert args.optimizer in OPTIMIZER_DICT.keys(), f"Invalid optimizer, valid options are: {', '.join(OPTIMIZER_DICT.keys())}"
@@ -374,6 +412,21 @@ def main() -> None:
 
     model = AutoModelForCausalLM.from_pretrained(
         args.model, low_cpu_mem_usage=True, torch_dtype=torch.bfloat16)
+    
+    if args.apply_lora:
+        # These settings will need to be tuned.
+        # Maybe add these as a bunch of separate args later?
+        lora_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            inference_mode=False,
+            r=args.lora_r,
+            lora_alpha=32,
+            lora_dropout=0.05,
+            merge_weights=False,
+        )
+        model = get_peft_model(model, lora_config)
+        if accelerator.is_main_process:
+            model.print_trainable_parameters()
 
     train_dataset = SFTDataset(
         args.train_dataset, tokenizer, is_main_process=accelerator.is_main_process)
