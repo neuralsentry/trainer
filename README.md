@@ -25,7 +25,7 @@ Other packages not listed in `requirements.txt` might also be useful (e.g. `wand
 
 ### Prepare your training data
 
-The training data should be a JSONL (jsonlines) line, where each line is a JSON object containing `prompt` and `generation` keys. Loss is only calculated over the tokens present in the `generation` text.
+The training data should be a JSONL (jsonlines) file, where each line is a JSON object containing `prompt` and `generation` keys. Loss is only calculated over the tokens present in the `generation` text.
 
 Here's an example of what a line might look like:
 
@@ -114,10 +114,11 @@ accelerate launch \
   ```python
   import torch
   from transformers import AutoModelForCausalLM
-  from peft import LoraConfig, TaskType, get_peft_model
+  from peft import LoraConfig, TaskType, get_peft_model, set_peft_model_state_dict
 
   BASE_MODEL = "/data/your-base-model-path-here"
   OUTPUT_DIR = "/data/your-peft-adapter-will-go-here"
+  STATE_DICT = "/data/your-checkpoint-folder-here/pytorch_model.bin"
 
   model = AutoModelForCausalLM.from_pretrained(BASE_MODEL)
 
@@ -131,8 +132,8 @@ accelerate launch \
   )
   model = get_peft_model(model, peft_config)
 
-  full_state_dict = torch.load("/data/your-checkpoint-folder-here/pytorch_model.bin", map_location="cpu")
-  model.load_state_dict(full_state_dict)
+  full_state_dict = torch.load(STATE_DICT, map_location="cpu")
+  set_peft_model_state_dict(model, full_state_dict)
 
   model.save_pretrained(OUTPUT_DIR)
   ```
