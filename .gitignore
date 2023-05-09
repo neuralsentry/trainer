@@ -4,3 +4,4 @@
 /wandb/
 
 /scripts/*.sh
+/scripts/*.bash
