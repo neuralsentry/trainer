@@ -118,6 +118,9 @@ def _process_training_example(
     # https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy
     generation = series.loc["generation"]
 
+    # TODO(11b): Do a more robust check here.
+    is_llama = tokenizer.eos_token == "</s>"
+
     if append_eos:
         # As it turns out, with LLaMA's tokenizer, if you just append EOS to the
         # end of the text it gets tokenized as a "</s>" text literal, and not as
@@ -126,14 +129,25 @@ def _process_training_example(
         #
         # I found this out after wasting 60+ GPU hours training a broken model
         # :)
-        if tokenizer.eos_token == "</s>":
+        if is_llama:
             generation += f" {tokenizer.eos_token}"
         else:
             generation += tokenizer.eos_token
 
     prompt_tokens = tokenizer(series["prompt"],
                               return_tensors="np").input_ids[0]
-    response_tokens = tokenizer(generation, return_tensors="np").input_ids[0]
+
+    # The LLaMA tokenizer will add a BOS token whenever you tokenize
+    # something by default. If we allow this to happen in the response segment,
+    # it will cause wildly inconsistent behaviors where the model itself will
+    # learn to output BOS in the middle of sentences depending on how input
+    # tokenization is done. Not great, so we just force-disable BOS on the
+    # response segment.
+    response_tokenizer_kwargs = {"add_special_tokens": False} if is_llama else {}
+    response_tokens = tokenizer(generation,
+                                return_tensors="np",
+                                **response_tokenizer_kwargs).input_ids[0]
+
     input_ids = np.concatenate([prompt_tokens, response_tokens], axis=-1)
 
     # Let's not waste any more GPU time thanks to this.
