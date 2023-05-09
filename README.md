@@ -35,7 +35,7 @@ Here's an example of what a line might look like:
 
 ### Tokenize the data
 
-With the data in hand, you should use the [tokenize_data.py](./preparation/tokenize_data.py) script to tokenize it for the model you're going to be fine-tuning. For example example:
+With the data in hand, you should use the [tokenize_data.py](./preparation/tokenize_data.py) script to tokenize it for the model you're going to be fine-tuning. For example:
 
 ```shell
 python3 ./preparation/tokenize_data.py \
@@ -106,38 +106,11 @@ accelerate launch \
 
 ### LoRA
 
-[hf_trainer.py](./training/hf_trainer.py) can be used to train LoRAs by using the `use_lora` argument. `lora_rank`, `lora_alpha` and `lora_dropout` can be used to configure parameters. A couple caveats though:
+[hf_trainer.py](./training/hf_trainer.py) can be used to train LoRAs by using the `use_lora` argument. `lora_rank`, `lora_alpha`, `lora_dropout` and `lora_target_modules` can be used to configure parameters. Notes:
 
 - It does not work when combined with FSDP. I haven't bothered fixing this because apparently FSDP + LoRA does not grant any VRAM savings. If you need optimizer/model sharding, use DeepSpeed instead for now.
-- The checkpoints written out by the trainer cannot be loaded using PEFT's `from_pretrained` method. The PEFT adapter needs to be "extracted" out of the full state dict first. If training with ZeRO stage 1 or 2 (or no sharding at all), here's an example of how you might do that (untested, but hopefully the general idea is clear either way):
-
-  ```python
-  import torch
-  from transformers import AutoModelForCausalLM
-  from peft import LoraConfig, TaskType, get_peft_model, set_peft_model_state_dict
-
-  BASE_MODEL = "/data/your-base-model-path-here"
-  OUTPUT_DIR = "/data/your-peft-adapter-will-go-here"
-  STATE_DICT = "/data/your-checkpoint-folder-here/pytorch_model.bin"
-
-  model = AutoModelForCausalLM.from_pretrained(BASE_MODEL)
-
-  # This needs to match your training configuration _exactly_.
-  peft_config = LoraConfig(
-      task_type=TaskType.CAUSAL_LM,
-      inference_mode=False,
-      r=64,
-      lora_alpha=32,
-      lora_dropout=0.05,
-  )
-  model = get_peft_model(model, peft_config)
-
-  full_state_dict = torch.load(STATE_DICT, map_location="cpu")
-  set_peft_model_state_dict(model, full_state_dict)
-
-  model.save_pretrained(OUTPUT_DIR)
-  ```
+- In my experience, when training a LoRA on older GPUs, increasing batch size will hurt throughput so you will likely have a bunch of VRAM leftover from using `bsz=1`. If you're training on a considerable amount of data, consider using `lora_target_modules` to also include the up/down projections in the MLP (e.g. for LLaMA, try `--lora_target_modules 'up_proj,down_proj,q_proj,v_proj'`) - this seems to improve how well the model learns, at the cost of higher VRAM usage for optimizer states and lower throughput.
 
 ### xFormers
 
-You can pass in `--use_xformers` to [hf_trainer.py](./training/hf_trainer.py) to use the `memory_efficient_attention` implementation from xFormers for GPT-J, NeoX and LLaMA-based models. **This has not been rigorously tested though**, so I encourage you to do a test run with/without the flag to check for strange behavior before using it on a complete training job.
+You can pass in `--use_xformers` to [hf_trainer.py](./training/hf_trainer.py) to use the `memory_efficient_attention` implementation from xFormers for GPT-J, NeoX and LLaMA-based models. **This has not been rigorously tested on anything other than LLaMA though**, so I encourage you to do a test run with/without the flag to check for strange behavior before using it on a complete training job.

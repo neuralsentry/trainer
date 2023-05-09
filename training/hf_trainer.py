@@ -1,3 +1,4 @@
+import os
 import pathlib
 import typing as t
 from dataclasses import dataclass, field
@@ -43,6 +44,8 @@ class LoraArguments:
                                         default=32)
     lora_dropout: t.Optional[float] = field(metadata={"help": "LoRA dropout."},
                                             default=0.05)
+    lora_target_modules: t.Optional[str] = field(metadata={"help": "Target modules, comma-separated."},
+                                                 default=None)
 
 
 def main() -> None:
@@ -93,18 +96,28 @@ def main() -> None:
     # LoRA setup.
     if lora_args.use_lora:
         from peft import LoraConfig, TaskType, get_peft_model
+
+        target_modules = None
+        if lora_args.lora_target_modules is not None:
+            target_modules = lora_args.lora_target_modules.split(",")
+
         peft_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
             inference_mode=False,
             r=lora_args.lora_rank,
             lora_alpha=lora_args.lora_alpha,
             lora_dropout=lora_args.lora_dropout,
+            target_modules=target_modules,
         )
         if training_args.gradient_checkpointing:
             model.enable_input_require_grads()
 
         model = get_peft_model(model, peft_config)
         model.print_trainable_parameters()
+
+    # Silence this annoying warning.
+    if training_args.gradient_checkpointing:
+        model.config.use_cache = False
 
     # Dataset setup.
     train_dataset = MmappedArrowDataset(data_args.train_file)
@@ -118,6 +131,7 @@ def main() -> None:
         eval_dataset=eval_dataset,
         data_collator=data_collator,
         args=training_args,
+        callbacks=[SavePeftModelCallback] if lora_args.use_lora else None,
     )
 
     try:
@@ -145,6 +159,38 @@ def main() -> None:
 
     trainer.save_state()
     trainer.save_model()
+
+
+class SavePeftModelCallback(transformers.TrainerCallback):
+    '''
+    At some point, PEFT stopped saving just the adapter and instead started
+    storing full model weights. Extracting the adapter from the weights is
+    doable, but seems to result in subpar results for some unknown reason, so
+    this Trainer callback saves the adapter itself during training to avoid
+    this.
+
+    https://github.com/huggingface/peft/issues/286#issuecomment-1512611968
+    https://github.com/huggingface/peft/blob/main/examples/int8_training/peft_bnb_whisper_large_v2_training.ipynb
+    '''
+
+    def on_save(
+        self,
+        args: transformers.TrainingArguments,
+        state: transformers.TrainerState,
+        control: transformers.TrainerControl,
+        **kwargs,
+    ):
+        checkpoint_folder_name = f"{transformers.trainer_utils.PREFIX_CHECKPOINT_DIR}-{state.global_step}"
+        checkpoint_folder = os.path.join(args.output_dir, checkpoint_folder_name)
+
+        peft_model_path = os.path.join(checkpoint_folder, "adapter_model")
+        kwargs["model"].save_pretrained(peft_model_path)
+
+        # pytorch_model_path = os.path.join(checkpoint_folder, "pytorch_model.bin")
+        # if os.path.exists(pytorch_model_path):
+        #     os.remove(pytorch_model_path)
+
+        return control
 
 
 if __name__ == "__main__":
