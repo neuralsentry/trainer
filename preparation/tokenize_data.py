@@ -7,7 +7,7 @@ import pandas as pd
 import pyarrow as pa
 import numpy as np
 from parallel_pandas import ParallelPandas
-from transformers import AutoTokenizer
+from transformers import AddedToken, AutoTokenizer
 from transformers.tokenization_utils import PreTrainedTokenizer
 
 LOG = logging.getLogger(__name__)
@@ -18,6 +18,9 @@ logging.basicConfig(
 
 IGNORE_INDEX = -100
 
+# When appending EOS to the generations, append this many times. Seems helpful
+# when training on long (e.g.: many paragraphs/300+ words) examples.
+NUM_OF_EOS_TOKENS = 3
 
 def main() -> None:
     args = _parse_args_from_argv()
@@ -31,6 +34,25 @@ def main() -> None:
 
     LOG.info("Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
+
+    if args.add_special_tokens is not None:
+        # MAINTENANCE(11b): Big fat warning: the snippet below is copy-pasted
+        # into ``./training/hf_trainer.py``. Make sure to always keep both
+        # implementations in sync.
+        special_token_contents = args.add_special_tokens.split(",")
+        special_tokens = [
+            AddedToken(
+                # Heads up: this is very poorly documented in HuggingFace and
+                # some old forum discussions mention that it's apparently
+                # exclusive to the Rust-based tokenizers? If anything seems
+                # funky about the special token behavior, this is a good place
+                # to look.
+                content, lstrip=True, rstrip=True)
+            for content in special_token_contents
+        ]
+
+        tokenizer.add_special_tokens(
+            {"additional_special_tokens": special_tokens})
 
     # Load the entire dataset into memory. Hopefully we won't be working with
     # huge files anytime soon! If this becomes a problem we can use Dask.
@@ -104,6 +126,13 @@ def _parse_args_from_argv() -> argparse.Namespace:
         help=
         "Max length in tokens before a training example is discarded. Defaults to 2048.",
     )
+    parser.add_argument(
+        "-s",
+        "--add-special-tokens",
+        type=str,
+        default=None,
+        help="Extra special tokens to add to the tokenizer before tokenizing. Comma-separated."
+    )
 
     return parser.parse_args()
 
@@ -122,17 +151,18 @@ def _process_training_example(
     is_llama = tokenizer.eos_token == "</s>"
 
     if append_eos:
-        # As it turns out, with LLaMA's tokenizer, if you just append EOS to the
-        # end of the text it gets tokenized as a "</s>" text literal, and not as
-        # token #2 which is the _actual_ EOS token. You must have a space before
-        # "</s>" so it becomes token #2 as expected.
-        #
-        # I found this out after wasting 60+ GPU hours training a broken model
-        # :)
-        if is_llama:
-            generation += f" {tokenizer.eos_token}"
-        else:
-            generation += tokenizer.eos_token
+        for _ in range(NUM_OF_EOS_TOKENS):
+            # As it turns out, with LLaMA's tokenizer, if you just append EOS to
+            # the end of the text it gets tokenized as a "</s>" text literal,
+            # and not as token #2 which is the _actual_ EOS token. You must have
+            # a space before "</s>" so it becomes token #2 as expected.
+            #
+            # I found this out after wasting 60+ GPU hours training a broken
+            # model :)
+            if is_llama:
+                generation += f" {tokenizer.eos_token}"
+            else:
+                generation += tokenizer.eos_token
 
     prompt_tokens = tokenizer(series["prompt"],
                               return_tensors="np").input_ids[0]

@@ -109,7 +109,9 @@ accelerate launch \
 [hf_trainer.py](./training/hf_trainer.py) can be used to train LoRAs by using the `use_lora` argument. `lora_rank`, `lora_alpha`, `lora_dropout` and `lora_target_modules` can be used to configure parameters. Notes:
 
 - It does not work when combined with FSDP. I haven't bothered fixing this because apparently FSDP + LoRA does not grant any VRAM savings. If you need optimizer/model sharding, use DeepSpeed instead for now.
-- In my experience, when training a LoRA on older GPUs, increasing batch size will hurt throughput so you will likely have a bunch of VRAM leftover from using `bsz=1`. If you're training on a considerable amount of data, consider using `lora_target_modules` to also include the up/down projections in the MLP (e.g. for LLaMA, try `--lora_target_modules 'up_proj,down_proj,q_proj,v_proj'`) - this seems to improve how well the model learns, at the cost of higher VRAM usage for optimizer states and lower throughput.
+- In my experience, when training a LoRA on older GPUs, increasing batch size will hurt throughput so you will likely have a bunch of VRAM leftover from using `bsz=1`. If you're training on a considerable amount of data, consider using `lora_target_modules` to also include other modules. This will improve how well the model learns, at the cost of higher VRAM usage for optimizer states and lower throughput.
+  - For example: by default, only `q_proj` and `v_proj` are targeted when fine-tuning LLaMA. You can include the up/down projections in the MLP (`up_proj`, `down_proj`) by using `--lora_target_modules 'up_proj,down_proj,q_proj,v_proj'`.
+  - Feel free to experiment with targeting other modules as well. If using special tokens or some uncommon language, the input embeddings and the LM head are usually also worth targeting.
 
 ### xFormers
 

@@ -25,13 +25,14 @@ class DataArguments:
 @dataclass
 class OtherArguments:
     model_load_delay_per_rank: t.Optional[int] = field(metadata={
-        "help":
-        "Delay loading the model by (this many seconds) * (local_rank).",
-    },
-                                                       default=None)
+        "help": "Delay loading the model by (this many seconds) * (local_rank)."},
+        default=None)
     enable_profiler: bool = field(
         metadata={"help": "Whether to profile the training loop."},
         default=False)
+    add_special_tokens: t.Optional[str] = field(metadata={
+        "help": "Extra special tokens to add to the tokenizer before training. Comma-separated."},
+        default=None)
 
 
 @dataclass
@@ -92,6 +93,28 @@ def main() -> None:
         low_cpu_mem_usage=True,
         torch_dtype=model_load_dtype,
     ).cuda()
+
+    if other_args.add_special_tokens is not None:
+        # MAINTENANCE(11b): Big fat warning: the snippet below is copy-pasted
+        # into ``./preparation/tokenize_data.py``. Make sure to always keep both
+        # implementations in sync.
+        special_token_contents = other_args.add_special_tokens.split(",")
+        special_tokens = [
+            transformers.AddedToken(
+                # Heads up: this is very poorly documented in HuggingFace and
+                # some old forum discussions mention that it's apparently
+                # exclusive to the Rust-based tokenizers? If anything seems
+                # funky about the special token behavior, this is a good place
+                # to look.
+                content, lstrip=True, rstrip=True)
+            for content in special_token_contents
+        ]
+
+        _add_special_tokens_to_tokenizer_and_resize_model_embeddings(
+            {"additional_special_tokens": special_tokens},
+            tokenizer,
+            model,
+        )
 
     # LoRA setup.
     if lora_args.use_lora:
@@ -192,6 +215,47 @@ class SavePeftModelCallback(transformers.TrainerCallback):
 
         return control
 
+
+def _add_special_tokens_to_tokenizer_and_resize_model_embeddings(
+    special_tokens: t.Dict[str, t.Union[str, transformers.AddedToken]],
+    tokenizer: transformers.PreTrainedTokenizerBase,
+    model: transformers.PreTrainedModel,
+):
+    tokenizer.add_special_tokens(special_tokens)
+
+    # Size is rounded up to the nearest number divisible by 64 for performance
+    # reasons.
+    new_size = _nearest_divisible(num=len(tokenizer), divisor=64)
+    old_size = model.config.vocab_size
+
+    if new_size == old_size:
+        # No resizing needs to be done, let's bail!
+        return
+
+    # Need to resize the token embeddings. We initialize the new positions with
+    # the mean of the existing ones to cut down on required training time.
+    model.resize_token_embeddings(new_size)
+    new_positions_count = new_size - old_size
+
+    input_embeddings = model.get_input_embeddings().weight.data
+    output_embeddings = model.get_output_embeddings().weight.data
+
+    # This is just to keep the LSP happy.
+    assert isinstance(input_embeddings, torch.Tensor)
+    assert isinstance(output_embeddings, torch.Tensor)
+
+    input_embeddings_avg = input_embeddings[:-new_positions_count].mean(dim=0,
+                                                             keepdim=True)
+    output_embeddings_avg = output_embeddings[:-new_positions_count].mean(dim=0,
+                                                               keepdim=True)
+
+    input_embeddings[-new_positions_count:] = input_embeddings_avg
+    output_embeddings[-new_positions_count:] = output_embeddings_avg
+
+
+def _nearest_divisible(num: int, divisor: int) -> int:
+    '''Returns the nearest number to `num` that is divisible by `divisor`.'''
+    return (num + divisor - 1) // divisor * divisor
 
 if __name__ == "__main__":
     main()
