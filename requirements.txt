@@ -1,5 +1,6 @@
-accelerate
-parallel_pandas
 peft
-pyarrow
-transformers
+transformers[torch]
+accelerate
+datasets
+wandb
+pandas
