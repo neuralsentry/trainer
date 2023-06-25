@@ -120,13 +120,6 @@ def _parse_args_from_argv() -> argparse.Namespace:
         help="Extra special tokens to add to the tokenizer before tokenizing. Comma-separated.",
     )
     parser.add_argument(
-        "-w",
-        "--n-workers",
-        type=int,
-        default=multiprocessing.cpu_count() // 2,
-        help="Number of workers to use for CPU-bound tasks. Defaults to half the number of CPU cores.",
-    )
-    parser.add_argument(
         "-c",
         "--column-name",
         type=str,
