@@ -5,3 +5,10 @@
 
 /scripts/*.sh
 /scripts/*.bash
+/scripts/*.ps1
+
+/models/*
+
+/data/*
+
+.env
