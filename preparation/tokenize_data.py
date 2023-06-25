@@ -85,10 +85,6 @@ def main() -> None:
             batched=True,
         )
 
-    if "label" in tokenized_dataset.column_names:
-        LOG.info("Renaming `label` column to `labels`...")
-        tokenized_dataset = tokenized_dataset.rename_column("label", "labels")
-
     LOG.info(f"Done! Saving to {args.output_file}...")
 
     tokenized_dataset.save_to_disk(args.output_file)
