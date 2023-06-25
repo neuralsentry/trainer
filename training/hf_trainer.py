@@ -11,7 +11,8 @@ from profiling import ProfilerCallback, build_profiler_configuration
 
 @dataclass
 class ModelArguments:
-    model_name_or_path: t.Optional[str] = field(default="EleutherAI/pythia-70m-deduped")
+    tokenizer_path: str = field(metadata={"help": "Path to the HF tokenizer to use."})
+    model_path: str = field(metadata={"help": "Path to the HF model to use."})
 
 
 @dataclass
@@ -74,7 +75,7 @@ def main() -> None:
     ) = parser.parse_args_into_dataclasses()
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
-        model_args.model_name_or_path,
+        model_args.tokenizer_path,
         padding_side="right",
         use_fast=True,
     )
@@ -97,7 +98,7 @@ def main() -> None:
         model_load_dtype = torch.float16
 
     model = transformers.AutoModelForCausalLM.from_pretrained(
-        model_args.model_name_or_path,
+        model_args.model_path,
         low_cpu_mem_usage=True,
         torch_dtype=model_load_dtype,
     ).cuda()
