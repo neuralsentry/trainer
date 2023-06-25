@@ -67,12 +67,23 @@ def main() -> None:
 
     LOG.info(f"Tokenizing and trimming dataset...")
 
-    tokenized_dataset = raw_dataset.map(
-        lambda sample: tokenizer(
-            sample[args.column_name], truncation=True, max_length=args.max_length
-        ),
-        batched=True,
-    )
+    tokenized_dataset: datasets.Dataset
+    if args.chunk_sentences:
+        tokenized_dataset = raw_dataset.map(
+            lambda sample: tokenizer(sample[args.column_name]),
+            batched=True,
+        )
+
+        tokenized_dataset = tokenized_dataset.map(
+            chunk_sentences(args.max_length), batched=True, num_proc=args.n_workers
+        )
+    else:
+        tokenized_dataset = raw_dataset.map(
+            lambda sample: tokenizer(
+                sample[args.column_name], truncation=True, max_length=args.max_length
+            ),
+            batched=True,
+        )
 
     if "label" in tokenized_dataset.column_names:
         LOG.info("Renaming `label` column to `labels`...")
@@ -150,8 +161,38 @@ def _parse_args_from_argv() -> argparse.Namespace:
         default=None,
         help="Token to use for separating sentences. Defaults to the tokenizer's default cls token.",
     )
+    parser.add_argument(
+        "--chunk-sentences",
+        action="store_true",
+        default=False,
+        help="Whether to chunk sentences for language modeling. Defaults to False.",
+    )
+    parser.add_argument(
+        "-w",
+        "--n-workers",
+        type=int,
+        default=multiprocessing.cpu_count() // 2,
+        help="Number of workers to use for CPU-bound tasks. Defaults to half the number of CPU cores.",
+    )
 
     return parser.parse_args()
+
+
+def chunk_sentences(chunk_size: int):
+    def apply(examples: dict):
+        concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
+        # Compute length of concatenated texts
+        total_length = len(concatenated_examples[list(examples.keys())[0]])
+        # Drop the last chunk if it's smaller than chunk_size
+        total_length = (total_length // chunk_size) * chunk_size
+        # Split by chunks of max_len
+        result = {
+            k: [t[i : i + chunk_size] for i in range(0, total_length, chunk_size)]
+            for k, t in concatenated_examples.items()
+        }
+        return result
+
+    return apply
 
 
 if __name__ == "__main__":
