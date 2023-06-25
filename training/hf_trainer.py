@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import torch
 import transformers
-from dataset import DataCollatorForMmapedDataset, MmappedArrowDataset
+from datasets import load_from_disk
 from profiling import ProfilerCallback, build_profiler_configuration
 
 
@@ -13,12 +13,53 @@ from profiling import ProfilerCallback, build_profiler_configuration
 class ModelArguments:
     tokenizer_path: str = field(metadata={"help": "Path to the HF tokenizer to use."})
     model_path: str = field(metadata={"help": "Path to the HF model to use."})
+    max_seq_length: int = field(
+        metadata={
+            "help": "Max length in tokens before a training example is truncated."
+        },
+    )
+    task_name: str = field(
+        metadata={"help": "Name of the task to train on."},
+        default="text-classification",
+    )
+    num_labels: int = field(
+        metadata={"help": "Number of labels for the task."}, default=2
+    )
+    mlm_probability: float = field(
+        metadata={"help": "Probability of masking a token."}, default=0.15
+    )
+    mask_token: t.Optional[str] = field(
+        metadata={
+            "help": "Token to use for masking. Defaults to the tokenizer's default mask token."
+        },
+        default=None,
+    )
+    pad_token: t.Optional[str] = field(
+        metadata={
+            "help": "Token to use for padding. Defaults to the tokenizer's default pad token."
+        },
+        default=None,
+    )
+    sep_token: t.Optional[str] = field(
+        metadata={
+            "help": "Token to use for separating sentences. Defaults to the tokenizer's default sep token."
+        },
+        default=None,
+    )
+    cls_token: t.Optional[str] = field(
+        metadata={
+            "help": "Token to use for separating sentences. Defaults to the tokenizer's default cls token."
+        },
+        default=None,
+    )
 
 
 @dataclass
 class DataArguments:
-    train_file: str = field(metadata={"help": "Path to the training set."})
-    eval_file: str = field(metadata={"help": "Path to the evaluation set."})
+    dataset_path: str = field(metadata={"help": "Path to the dataset (arrow)."})
+    train_split: float = field(
+        metadata={"help": "Fraction of the dataset to use for training."}, default=0.9
+    )
 
 
 @dataclass
@@ -40,28 +81,11 @@ class OtherArguments:
     )
 
 
-@dataclass
-class LoraArguments:
-    use_lora: t.Optional[bool] = field(
-        metadata={"help": "Whether to train a LoRA instead of the full model."},
-        default=False,
-    )
-    lora_rank: t.Optional[int] = field(metadata={"help": "LoRA rank."}, default=4)
-    lora_alpha: t.Optional[int] = field(metadata={"help": "LoRA alpha."}, default=32)
-    lora_dropout: t.Optional[float] = field(
-        metadata={"help": "LoRA dropout."}, default=0.05
-    )
-    lora_target_modules: t.Optional[str] = field(
-        metadata={"help": "Target modules, comma-separated."}, default=None
-    )
-
-
 def main() -> None:
     parser = transformers.HfArgumentParser(
         (
             ModelArguments,
             DataArguments,
-            LoraArguments,
             OtherArguments,
             transformers.TrainingArguments,
         )
@@ -69,15 +93,11 @@ def main() -> None:
     (
         model_args,
         data_args,
-        lora_args,
         other_args,
         training_args,
     ) = parser.parse_args_into_dataclasses()
-
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.tokenizer_path,
-        padding_side="right",
-        use_fast=True,
     )
 
     if other_args.model_load_delay_per_rank is not None:
@@ -90,18 +110,27 @@ def main() -> None:
 
         time.sleep(other_args.model_load_delay_per_rank * training_args.local_rank)
 
-    # Model loading.
-    model_load_dtype = None
-    if training_args.bf16:
-        model_load_dtype = torch.bfloat16
-    elif training_args.fp16:
-        model_load_dtype = torch.float16
+    if model_args.task_name == "text-classification":
+        model = transformers.AutoModelForSequenceClassification.from_pretrained(
+            model_args.model_path,
+            num_labels=2,
+        ).cuda()
+    elif model_args.task_name == "mlm":
+        model = transformers.AutoModelForMaskedLM.from_pretrained(
+            model_args.model_path,
+        ).cuda()
 
-    model = transformers.AutoModelForCausalLM.from_pretrained(
-        model_args.model_path,
-        low_cpu_mem_usage=True,
-        torch_dtype=model_load_dtype,
-    ).cuda()
+    if model_args.mask_token is not None:
+        tokenizer.mask_token = model_args.mask_token
+
+    if model_args.pad_token is not None:
+        tokenizer.pad_token = model_args.pad_token
+
+    if model_args.sep_token is not None:
+        tokenizer.sep_token = model_args.sep_token
+
+    if model_args.cls_token is not None:
+        tokenizer.cls_token = model_args.cls_token
 
     if other_args.add_special_tokens is not None:
         # MAINTENANCE(11b): Big fat warning: the snippet below is copy-pasted
@@ -128,36 +157,18 @@ def main() -> None:
             model,
         )
 
-    # LoRA setup.
-    if lora_args.use_lora:
-        from peft import LoraConfig, TaskType, get_peft_model
-
-        target_modules = None
-        if lora_args.lora_target_modules is not None:
-            target_modules = lora_args.lora_target_modules.split(",")
-
-        peft_config = LoraConfig(
-            task_type=TaskType.CAUSAL_LM,
-            inference_mode=False,
-            r=lora_args.lora_rank,
-            lora_alpha=lora_args.lora_alpha,
-            lora_dropout=lora_args.lora_dropout,
-            target_modules=target_modules,
-        )
-        if training_args.gradient_checkpointing:
-            model.enable_input_require_grads()
-
-        model = get_peft_model(model, peft_config)
-        model.print_trainable_parameters()
-
-    # Silence this annoying warning.
-    if training_args.gradient_checkpointing:
-        model.config.use_cache = False
-
     # Dataset setup.
-    train_dataset = MmappedArrowDataset(data_args.train_file)
-    eval_dataset = MmappedArrowDataset(data_args.eval_file)
-    data_collator = DataCollatorForMmapedDataset(tokenizer=tokenizer)
+    tokenized_dataset = load_from_disk(data_args.dataset_path)
+    split_dataset = tokenized_dataset.train_test_split(
+        train_size=data_args.train_split,
+        test_size=1 - data_args.train_split,
+        seed=training_args.seed,
+    )
+    train_dataset = split_dataset["train"]
+    eval_dataset = split_dataset["test"]
+    data_collator = transformers.DataCollatorForLanguageModeling(
+        tokenizer=tokenizer, mlm_probability=model_args.mlm_probability
+    )
 
     trainer = transformers.Trainer(
         model=model,
@@ -166,7 +177,6 @@ def main() -> None:
         eval_dataset=eval_dataset,
         data_collator=data_collator,
         args=training_args,
-        callbacks=[SavePeftModelCallback] if lora_args.use_lora else None,
     )
 
     try:
@@ -194,40 +204,6 @@ def main() -> None:
 
     trainer.save_state()
     trainer.save_model()
-
-
-class SavePeftModelCallback(transformers.TrainerCallback):
-    """
-    At some point, PEFT stopped saving just the adapter and instead started
-    storing full model weights. Extracting the adapter from the weights is
-    doable, but seems to result in subpar results for some unknown reason, so
-    this Trainer callback saves the adapter itself during training to avoid
-    this.
-
-    https://github.com/huggingface/peft/issues/286#issuecomment-1512611968
-    https://github.com/huggingface/peft/blob/main/examples/int8_training/peft_bnb_whisper_large_v2_training.ipynb
-    """
-
-    def on_save(
-        self,
-        args: transformers.TrainingArguments,
-        state: transformers.TrainerState,
-        control: transformers.TrainerControl,
-        **kwargs,
-    ):
-        checkpoint_folder_name = (
-            f"{transformers.trainer_utils.PREFIX_CHECKPOINT_DIR}-{state.global_step}"
-        )
-        checkpoint_folder = os.path.join(args.output_dir, checkpoint_folder_name)
-
-        peft_model_path = os.path.join(checkpoint_folder, "adapter_model")
-        kwargs["model"].save_pretrained(peft_model_path)
-
-        # pytorch_model_path = os.path.join(checkpoint_folder, "pytorch_model.bin")
-        # if os.path.exists(pytorch_model_path):
-        #     os.remove(pytorch_model_path)
-
-        return control
 
 
 def _add_special_tokens_to_tokenizer_and_resize_model_embeddings(
