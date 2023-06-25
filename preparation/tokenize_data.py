@@ -74,6 +74,15 @@ def main() -> None:
             batched=True,
         )
 
+        # remove all columsn except `input_ids`, `attention_mask`
+        tokenized_dataset = tokenized_dataset.remove_columns(
+            [
+                col
+                for col in tokenized_dataset.column_names
+                if col not in ["input_ids", "attention_mask"]
+            ]
+        )
+
         tokenized_dataset = tokenized_dataset.map(
             chunk_sentences(args.max_length), batched=True, num_proc=args.n_workers
         )
