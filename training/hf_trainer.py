@@ -11,9 +11,7 @@ from profiling import ProfilerCallback, build_profiler_configuration
 
 @dataclass
 class ModelArguments:
-    model_name_or_path: t.Optional[str] = field(
-        default="EleutherAI/pythia-70m-deduped")
-    use_xformers: bool = field(default=False, metadata={"help": "Use xFormers' memory_efficient_attention"})
+    model_name_or_path: t.Optional[str] = field(default="EleutherAI/pythia-70m-deduped")
 
 
 @dataclass
@@ -24,52 +22,62 @@ class DataArguments:
 
 @dataclass
 class OtherArguments:
-    model_load_delay_per_rank: t.Optional[int] = field(metadata={
-        "help": "Delay loading the model by (this many seconds) * (local_rank)."},
-        default=None)
+    model_load_delay_per_rank: t.Optional[int] = field(
+        metadata={
+            "help": "Delay loading the model by (this many seconds) * (local_rank)."
+        },
+        default=None,
+    )
     enable_profiler: bool = field(
-        metadata={"help": "Whether to profile the training loop."},
-        default=False)
-    add_special_tokens: t.Optional[str] = field(metadata={
-        "help": "Extra special tokens to add to the tokenizer before training. Comma-separated."},
-        default=None)
+        metadata={"help": "Whether to profile the training loop."}, default=False
+    )
+    add_special_tokens: t.Optional[str] = field(
+        metadata={
+            "help": "Extra special tokens to add to the tokenizer before training. Comma-separated."
+        },
+        default=None,
+    )
 
 
 @dataclass
 class LoraArguments:
-    use_lora: t.Optional[bool] = field(metadata={"help": "Whether to train a LoRA instead of the full model."},
-                                       default=False)
-    lora_rank: t.Optional[int] = field(metadata={"help": "LoRA rank."},
-                                       default=4)
-    lora_alpha: t.Optional[int] = field(metadata={"help": "LoRA alpha."},
-                                        default=32)
-    lora_dropout: t.Optional[float] = field(metadata={"help": "LoRA dropout."},
-                                            default=0.05)
-    lora_target_modules: t.Optional[str] = field(metadata={"help": "Target modules, comma-separated."},
-                                                 default=None)
+    use_lora: t.Optional[bool] = field(
+        metadata={"help": "Whether to train a LoRA instead of the full model."},
+        default=False,
+    )
+    lora_rank: t.Optional[int] = field(metadata={"help": "LoRA rank."}, default=4)
+    lora_alpha: t.Optional[int] = field(metadata={"help": "LoRA alpha."}, default=32)
+    lora_dropout: t.Optional[float] = field(
+        metadata={"help": "LoRA dropout."}, default=0.05
+    )
+    lora_target_modules: t.Optional[str] = field(
+        metadata={"help": "Target modules, comma-separated."}, default=None
+    )
 
 
 def main() -> None:
-    parser = transformers.HfArgumentParser((
-        ModelArguments,
-        DataArguments,
-        LoraArguments,
-        OtherArguments,
-        transformers.TrainingArguments,
-    ))
-    model_args, data_args, lora_args, \
-        other_args, training_args = parser.parse_args_into_dataclasses()
+    parser = transformers.HfArgumentParser(
+        (
+            ModelArguments,
+            DataArguments,
+            LoraArguments,
+            OtherArguments,
+            transformers.TrainingArguments,
+        )
+    )
+    (
+        model_args,
+        data_args,
+        lora_args,
+        other_args,
+        training_args,
+    ) = parser.parse_args_into_dataclasses()
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
         padding_side="right",
         use_fast=True,
     )
-
-    # xFormers optimizations.
-    if model_args.use_xformers:
-        from monkeypatches import apply_xformers_monkeypatches
-        apply_xformers_monkeypatches()
 
     if other_args.model_load_delay_per_rank is not None:
         # When working with constrained system memory, loading the model at the
@@ -78,8 +86,8 @@ def main() -> None:
         # local_rank so not all processes are doing this at once, which
         # alleviates the situation. Kinda silly, but it works.
         import time
-        time.sleep(other_args.model_load_delay_per_rank *
-                   training_args.local_rank)
+
+        time.sleep(other_args.model_load_delay_per_rank * training_args.local_rank)
 
     # Model loading.
     model_load_dtype = None
@@ -106,7 +114,10 @@ def main() -> None:
                 # exclusive to the Rust-based tokenizers? If anything seems
                 # funky about the special token behavior, this is a good place
                 # to look.
-                content, lstrip=True, rstrip=True)
+                content,
+                lstrip=True,
+                rstrip=True,
+            )
             for content in special_token_contents
         ]
 
@@ -160,9 +171,9 @@ def main() -> None:
     try:
         # Resume from checkpoint if we have any checkpoints automatically saved
         # by the HF Trainer within the output directory.
-        resume_from_checkpoint = len(
-            list(pathlib.Path(
-                training_args.output_dir).glob("checkpoint-*"))) > 0
+        resume_from_checkpoint = (
+            len(list(pathlib.Path(training_args.output_dir).glob("checkpoint-*"))) > 0
+        )
 
         if other_args.enable_profiler:
             profiler_args = build_profiler_configuration()
@@ -185,7 +196,7 @@ def main() -> None:
 
 
 class SavePeftModelCallback(transformers.TrainerCallback):
-    '''
+    """
     At some point, PEFT stopped saving just the adapter and instead started
     storing full model weights. Extracting the adapter from the weights is
     doable, but seems to result in subpar results for some unknown reason, so
@@ -194,7 +205,7 @@ class SavePeftModelCallback(transformers.TrainerCallback):
 
     https://github.com/huggingface/peft/issues/286#issuecomment-1512611968
     https://github.com/huggingface/peft/blob/main/examples/int8_training/peft_bnb_whisper_large_v2_training.ipynb
-    '''
+    """
 
     def on_save(
         self,
@@ -203,7 +214,9 @@ class SavePeftModelCallback(transformers.TrainerCallback):
         control: transformers.TrainerControl,
         **kwargs,
     ):
-        checkpoint_folder_name = f"{transformers.trainer_utils.PREFIX_CHECKPOINT_DIR}-{state.global_step}"
+        checkpoint_folder_name = (
+            f"{transformers.trainer_utils.PREFIX_CHECKPOINT_DIR}-{state.global_step}"
+        )
         checkpoint_folder = os.path.join(args.output_dir, checkpoint_folder_name)
 
         peft_model_path = os.path.join(checkpoint_folder, "adapter_model")
@@ -244,18 +257,21 @@ def _add_special_tokens_to_tokenizer_and_resize_model_embeddings(
     assert isinstance(input_embeddings, torch.Tensor)
     assert isinstance(output_embeddings, torch.Tensor)
 
-    input_embeddings_avg = input_embeddings[:-new_positions_count].mean(dim=0,
-                                                             keepdim=True)
-    output_embeddings_avg = output_embeddings[:-new_positions_count].mean(dim=0,
-                                                               keepdim=True)
+    input_embeddings_avg = input_embeddings[:-new_positions_count].mean(
+        dim=0, keepdim=True
+    )
+    output_embeddings_avg = output_embeddings[:-new_positions_count].mean(
+        dim=0, keepdim=True
+    )
 
     input_embeddings[-new_positions_count:] = input_embeddings_avg
     output_embeddings[-new_positions_count:] = output_embeddings_avg
 
 
 def _nearest_divisible(num: int, divisor: int) -> int:
-    '''Returns the nearest number to `num` that is divisible by `divisor`.'''
+    """Returns the nearest number to `num` that is divisible by `divisor`."""
     return (num + divisor - 1) // divisor * divisor
+
 
 if __name__ == "__main__":
     main()
