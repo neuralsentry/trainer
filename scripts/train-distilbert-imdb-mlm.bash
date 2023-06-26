@@ -28,7 +28,6 @@ python ./training/hf_trainer.py \
 --mlm_probability 0.15 \
 --fp16 true \
 --train_split 0.5 \
---use_lora true \
 --evaluation_strategy 'epoch' \
 --logging_strategy 'epoch' \
 --save_strategy 'epoch' \
