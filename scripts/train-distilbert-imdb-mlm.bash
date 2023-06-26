@@ -27,9 +27,9 @@ python ./training/hf_trainer.py \
 --weight_decay 1e-2 \
 --mlm_probability 0.15 \
 --fp16 true \
---train_split 0.5 \
+--train_split 0.8 \
 --evaluation_strategy 'epoch' \
 --logging_strategy 'epoch' \
---save_strategy 'epoch' \
---hub_strategy 'every_save' \
+--save_strategy 'no' \
+--hub_strategy 'end' \
 --save_total_limit 2
