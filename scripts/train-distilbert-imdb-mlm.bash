@@ -12,11 +12,11 @@ python ./training/hf_trainer.py \
 --hub_model_id "$WANDB_PROJECT" \
 --push_to_hub true \
 --task_name 'mlm' \
---report_to 'none' \
+--report_to 'wandb' \
 --do_train \
 --do_eval \
 --num_train_epochs 20 \
---max_seq_length 128 \
+--max_seq_length 256 \
 --per_device_train_batch_size 64 \
 --per_device_eval_batch_size 64 \
 --seed=420 \
