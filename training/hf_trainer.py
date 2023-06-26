@@ -110,6 +110,7 @@ def main() -> None:
 
         time.sleep(other_args.model_load_delay_per_rank * training_args.local_rank)
 
+    device = torch.device("cuda", training_args.local_rank)
     if model_args.task_name == "text-classification":
         model = transformers.AutoModelForSequenceClassification.from_pretrained(
             model_args.model_path,
@@ -119,6 +120,7 @@ def main() -> None:
         model = transformers.AutoModelForMaskedLM.from_pretrained(
             model_args.model_path,
         ).cuda()
+    model.to(device)
 
     if model_args.mask_token is not None:
         tokenizer.mask_token = model_args.mask_token
