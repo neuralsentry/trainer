@@ -2,5 +2,7 @@ peft
 transformers[torch]
 accelerate
 datasets
+evaluate
 wandb
 pandas
+scikit-learn
