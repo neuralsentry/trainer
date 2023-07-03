@@ -74,6 +74,7 @@ def main():
         revision=model_args.model_revision,
         num_labels=2,
     )
+    model.config.output_hidden_states = False
 
     if model_args.mask_token is not None:
         tokenizer.mask_token = model_args.mask_token
