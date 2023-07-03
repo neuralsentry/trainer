@@ -17,8 +17,8 @@ config_training_output_dir="models/$model_name"
 config_training_overwrite_output_dir=true
 config_training_do_train=true
 config_training_do_eval=true
-config_training_per_device_train_batch_size=128
-config_training_per_device_eval_batch_size=128
+config_training_per_device_train_batch_size=96
+config_training_per_device_eval_batch_size=96
 config_training_fp16=true
 config_training_learning_rate=1e-4
 config_training_seed=420
@@ -30,9 +30,9 @@ config_training_lr_scheduler_type="linear"
 config_training_evaluation_strategy=$interval_STEPS
 config_training_logging_strategy=$interval_STEPS
 config_training_save_strategy=$interval_EPOCH
-config_training_eval_steps=3
-config_training_logging_steps=3
-config_training_save_steps=3
+config_training_eval_steps=7
+config_training_logging_steps=7
+config_training_save_steps=7
 config_training_save_total_limit=2
 config_training_report_to=$report_to
 config_training_hub_strategy=$hub_strategy_END
@@ -82,7 +82,7 @@ python training/run_git_commits_bugfix_classification.py \
 --max_seq_length $config_data_max_seq_length \
 --validation_split_percentage $config_data_validation_split_percentage \
 --preprocessing_num_workers $config_data_preprocessing_num_workers \
---text_column_name $config_data_text_column_name # \
+--text_column_name $config_data_text_column_name \
 # --max_train_samples $config_data_max_train_samples \
 # --max_eval_samples $config_data_max_eval_samples \
 
