@@ -17,26 +17,26 @@ config_training_output_dir="models/$model_name"
 config_training_overwrite_output_dir=true
 config_training_do_train=true
 config_training_do_eval=true
-config_training_per_device_train_batch_size=64
-config_training_per_device_eval_batch_size=64
+config_training_per_device_train_batch_size=128
+config_training_per_device_eval_batch_size=128
 config_training_fp16=true
 config_training_learning_rate=1e-4
 config_training_seed=420
 config_training_data_seed=420
-config_training_num_train_epochs=5
+config_training_num_train_epochs=2
 config_training_optim="adamw_hf"
 config_training_weight_decay=1e-2
 config_training_lr_scheduler_type="linear"
 config_training_evaluation_strategy=$interval_STEPS
 config_training_logging_strategy=$interval_STEPS
-config_training_save_strategy=$interval_NO
-config_training_eval_steps=10
-config_training_logging_steps=10
-config_training_save_steps=500
+config_training_save_strategy=$interval_EPOCH
+config_training_eval_steps=3
+config_training_logging_steps=3
+config_training_save_steps=3
 config_training_save_total_limit=2
 config_training_report_to=$report_to
-config_training_hub_strategy=$hub_strategy_EVERY_SAVE
-config_training_push_to_hub=false
+config_training_hub_strategy=$hub_strategy_END
+config_training_push_to_hub=true
 config_training_hub_model_id="neuralsentry/$model_name"
 config_model_model_name_or_path="neuralsentry/distilbert-git-commits-mlm"
 config_model_model_revision="main"
@@ -49,7 +49,7 @@ config_data_text_column_name="commit_msg"
 # config_data_max_train_samples=1000
 # config_data_max_eval_samples=200
 
-python training/run_mlm.py \
+python training/run_git_commits_bugfix_classification.py \
 --output_dir $config_training_output_dir \
 --overwrite_output_dir $config_training_overwrite_output_dir \
 --do_train $config_training_do_train \
